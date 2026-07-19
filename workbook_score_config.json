@@ -1,0 +1,20 @@
+{
+  "include_sheets": [],
+  "exclude_sheets": [],
+  "sheet_map": {},
+  "ranges": {},
+  "ignore_ranges": {},
+  "sheet_weights": {},
+  "range_weights": [],
+  "absolute_tolerance": 0.01,
+  "relative_tolerance": 0.000001,
+  "text_case_sensitive": false,
+  "collapse_whitespace": true,
+  "sheet_name_case_sensitive": false,
+  "formula_mode": "values",
+  "score_blank_expected_cells": false,
+  "penalize_extra_cells": false,
+  "penalize_extra_sheets": false,
+  "pass_threshold": 95.0,
+  "max_mismatches": 50
+}

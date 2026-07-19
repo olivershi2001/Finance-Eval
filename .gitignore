@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+node_modules
+
+# Local Python environments and secrets
+.venv/
+venv/
+.env
+.env.*
+
+# macOS and Excel temporary files
+.DS_Store
+~$*.xlsx
+
+# Spreadsheet build/QA sidecars
+*.xlsx.inspect.ndjson
+outputs/**/qa_*.png
+outputs/**/qa_inspection.txt
+outputs/llm_judge/

@@ -1,0 +1,28 @@
+{
+  "extends": "customer_cube_llm_judge.json",
+  "rubric_id": "customer_cube_flexible_output",
+  "rubric_version": "1.0",
+  "title": "Customer Cube - Flexible Output Design",
+  "pass_threshold": 80,
+  "purpose": "Use when different workbook layouts and cutting approaches are acceptable, provided the required periods, dimensions, metrics, and tie-outs remain clear.",
+  "criteria_overrides": {
+    "input_fidelity": {
+      "max_points": 10
+    },
+    "periods_and_cuts": {
+      "max_points": 20
+    },
+    "movement_classification": {
+      "max_points": 25
+    },
+    "retention": {
+      "max_points": 15
+    },
+    "reconciliation": {
+      "max_points": 15
+    },
+    "auditability": {
+      "max_points": 15
+    }
+  }
+}

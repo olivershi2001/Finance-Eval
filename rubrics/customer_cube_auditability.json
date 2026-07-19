@@ -1,0 +1,28 @@
+{
+  "extends": "customer_cube_llm_judge.json",
+  "rubric_id": "customer_cube_auditability",
+  "rubric_version": "1.0",
+  "title": "Customer Cube - Review and Auditability",
+  "pass_threshold": 80,
+  "purpose": "Use when the workbook must remain numerically sound while being especially easy for a finance reviewer to trace, understand, and reuse.",
+  "criteria_overrides": {
+    "input_fidelity": {
+      "max_points": 10
+    },
+    "periods_and_cuts": {
+      "max_points": 15
+    },
+    "movement_classification": {
+      "max_points": 25
+    },
+    "retention": {
+      "max_points": 15
+    },
+    "reconciliation": {
+      "max_points": 15
+    },
+    "auditability": {
+      "max_points": 20
+    }
+  }
+}

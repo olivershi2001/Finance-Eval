@@ -1,0 +1,9 @@
+{
+  "contract_version": 1,
+  "amount_mode": "period_sum",
+  "fiscal_year_start_month": 1,
+  "slices": ["overall", "product", "customer"],
+  "absolute_tolerance": 0.01,
+  "relative_tolerance": 0.000001,
+  "pass_threshold": 95.0
+}

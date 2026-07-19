@@ -1,0 +1,28 @@
+{
+  "extends": "customer_cube_llm_judge.json",
+  "rubric_id": "customer_cube_strict_accuracy",
+  "rubric_version": "1.0",
+  "title": "Customer Cube - Strict Numerical Accuracy",
+  "pass_threshold": 90,
+  "purpose": "Use when movement classification, retention mathematics, and reconciliation must be highly accurate, with limited credit for presentation quality.",
+  "criteria_overrides": {
+    "input_fidelity": {
+      "max_points": 10
+    },
+    "periods_and_cuts": {
+      "max_points": 10
+    },
+    "movement_classification": {
+      "max_points": 40
+    },
+    "retention": {
+      "max_points": 25
+    },
+    "reconciliation": {
+      "max_points": 12
+    },
+    "auditability": {
+      "max_points": 3
+    }
+  }
+}
