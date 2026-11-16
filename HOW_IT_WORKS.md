@@ -5,17 +5,19 @@ experienced Python developer to follow it.
 
 ## What this project does
 
-The project grades an Excel-based customer cube.
+The project grades a language model's Excel-based customer cube.
 
-It starts with two workbooks:
+It starts with one raw source workbook containing `Customer name`, `Month`,
+`Amount`, and `Product`. The project calls the candidate language model itself;
+you do not need to build a candidate workbook first.
 
-1. A raw source workbook containing `Customer name`, `Month`, `Amount`, and
-   `Product`.
-2. A candidate workbook containing someone's customer-cube analysis.
+The candidate model returns structured customer-cube content. Python saves that
+exact response, checks its shape, and passes it to a spreadsheet builder. The
+builder creates the candidate Excel workbook that you can open and inspect.
 
-The project sends the contents of those workbooks, together with a grading
-rubric, to a language model. The model reviews the candidate workbook and
-returns criterion-level scores, explanations, and Excel cell references.
+A separate judge model then receives the raw source workbook, the generated
+candidate workbook, and the grading rubric. It returns criterion-level ratings,
+explanations, and Excel cell references.
 
 Python then checks the model's response, adds the points, applies the pass
 threshold, and saves a JSON report.
@@ -27,22 +29,31 @@ weights, or calculate the final score.
 
 ```text
 Raw Excel workbook
+        |
+        v
+Python builds the candidate-model prompt
+        |
+        v
+Candidate LLM returns structured JSON
+        |
+        v
+Python saves the exact response and renders it to Excel
+        |
+        v
+Generated candidate workbook
         +
-Candidate Excel workbook
+Raw Excel workbook
         +
 Selected rubric JSON
         |
         v
-Python reads every relevant Excel cell
+Python builds the independent grading prompt
         |
         v
-Python builds one grading prompt
+Judge LLM grades the generated workbook
         |
         v
-OpenAI Responses API grades the workbook
-        |
-        v
-Model returns criterion scores and evidence
+Judge returns criterion ratings and evidence
         |
         v
 Python validates and totals the scores
@@ -51,7 +62,63 @@ Python validates and totals the scores
 Validated JSON report
 ```
 
-## Step 1: Reading the Excel files
+Run the full workflow with:
+
+```bash
+python3 model_eval.py run fixtures/customer_cube_raw.xlsx
+```
+
+The two model settings live in separate files:
+
+- `candidate_model_config.json` controls the model being tested.
+- `llm_judge_config.json` controls the independent grader.
+
+This separation lets you test model A with model B as the judge. The candidate
+does not receive the rubric, thresholds, or criterion weights.
+
+## What the candidate model returns
+
+The candidate response is a strict JSON object containing:
+
+- quarterly rows;
+- annual rows;
+- overall, product, and customer cuts;
+- New, Upsell, Downsell, Cross-sell, and Churn;
+- GRR, NRR, and TTM GRR;
+- a summary, insights, diligence questions, assumptions, and data-quality
+  findings.
+
+Structured Outputs constrains the response shape, but it does not make the
+numbers correct. Missing rows, bad classifications, incorrect calculations,
+weak insights, and poor traceability are still visible in the generated
+workbook and can reduce the judge's score.
+
+If the model returns invalid or truncated JSON, the run still creates a fallback
+workbook showing the contract failure and raw response. The judge can then score
+the failure instead of the pipeline silently treating it as no result.
+
+## What files one run creates
+
+The default run directory is `outputs/model_eval/latest/`:
+
+| File | Purpose |
+|---|---|
+| `candidate_prompt.md` | Exact task and raw workbook evidence sent to the candidate. |
+| `candidate_response.json` | Exact model output before local validation. |
+| `candidate_output.xlsx` | Reviewable Excel rendering of the model output. |
+| `judge_prompt.md` | Exact rubric and workbook evidence sent to the judge. |
+| `judge_response.json` | Judge's unvalidated response. |
+| `validated_report.json` | Final controlled score and outcome. |
+| `run_manifest.json` | Models, hashes, contract status, score, and provenance. |
+
+Open the two main outputs with:
+
+```bash
+open outputs/model_eval/latest/candidate_output.xlsx
+open -a TextEdit outputs/model_eval/latest/validated_report.json
+```
+
+## How Excel files are read
 
 The Excel-reading code lives in `xlsx_reader.py`.
 
@@ -84,17 +151,23 @@ For example, a worksheet may become evidence resembling:
 This preserves enough location information for the grader to cite evidence
 such as `Quarterly!A2:C2`.
 
-The project does not grade colors, fonts, widths, or decorative formatting.
+The evidence includes Excel number-format codes so the finance rubric can check
+currency, percentage, date, unit, and precision conventions. It does not render
+the workbook for the grading model, so the model is instructed not to invent
+claims about clipping, overlap, fonts, or colors that are not observable.
 
-## Step 2: Loading the rubric
+## How the rubric is loaded
 
 Rubrics live in the `rubrics/` directory.
 
-The balanced base rubric is:
+The default rubric is:
 
 ```text
-rubrics/customer_cube_llm_judge.json
+rubrics/customer_cube_finance_template.json
 ```
+
+It extends the balanced base rubric in
+`rubrics/customer_cube_llm_judge.json`.
 
 It defines:
 
@@ -104,6 +177,7 @@ It defines:
 - individual grading criteria;
 - the maximum points for each criterion;
 - the pass threshold; and
+- an optional review threshold and anchored rating scale; and
 - the limited set of errors that can force an automatic fail.
 
 When Python loads a rubric, it checks that:
@@ -112,22 +186,25 @@ When Python loads a rubric, it checks that:
 - every maximum score is positive;
 - all criterion weights total exactly 100;
 - the pass threshold is between 0 and 100; and
+- the review threshold, when present, is no higher than the pass threshold;
+- every anchored criterion has valid rating descriptions; and
 - every critical-failure ID is unique and documented.
 
 If one of those checks fails, grading stops before an API call is made.
 
 ## Rubric imports and presets
 
-The project includes four rubric choices:
+The project includes five rubric choices:
 
 | Rubric | Main emphasis |
 |---|---|
-| `customer_cube_llm_judge.json` | Balanced default grading. |
+| `customer_cube_finance_template.json` | Default finance-review rubric with 0–4 anchors, review routing, and dataset variants. |
+| `customer_cube_llm_judge.json` | Original balanced point-based grading. |
 | `customer_cube_strict_accuracy.json` | Movements, retention, and numerical accuracy. |
 | `customer_cube_auditability.json` | Traceability and finance-reviewer usability. |
 | `customer_cube_flexible_output.json` | Different layouts and cutting approaches. |
 
-The three variants import the balanced rubric with `extends`.
+The four variants import the balanced rubric with `extends`.
 
 For example:
 
@@ -176,7 +253,7 @@ Important safeguards in the prompt tell the model to:
 - recalculate representative samples from the raw records;
 - cite worksheet cells or ranges for every criterion;
 - avoid double-counting deductions; and
-- return criterion scores rather than its own final score.
+- return criterion ratings or scores rather than its own final score.
 
 You can build and inspect this prompt without calling a model:
 
@@ -184,7 +261,7 @@ You can build and inspect this prompt without calling a model:
 python3 llm_judge.py prepare \
   fixtures/customer_cube_raw.xlsx \
   /path/to/candidate_output.xlsx \
-  --rubric rubrics/customer_cube_llm_judge.json \
+  --rubric rubrics/customer_cube_finance_template.json \
   --output outputs/llm_judge/judge_prompt.md
 ```
 
@@ -278,14 +355,21 @@ It rejects the model response if:
 - confidence is outside the range from 0 to 1; or
 - the model invents an unapproved critical-failure ID.
 
-After validation, Python adds the criterion scores itself.
-
-The result passes only when:
+After validation, Python adds the criterion scores itself. For the default
+finance-template rubric, the model returns an integer rating from 0 to 4 for
+each criterion. Python converts it to weighted points with:
 
 ```text
-validated score >= rubric pass threshold
-AND
-there are no validated critical failures
+weighted points = criterion weight × rating / 4
+```
+
+The default result is assigned as follows:
+
+```text
+critical failure observed           -> FAIL - CRITICAL
+score >= 85 and no critical failure -> PASS
+score >= 70 and score < 85          -> REVIEW
+score < 70                          -> FAIL
 ```
 
 This prevents a model from returning a collection of criterion scores that do
@@ -299,7 +383,7 @@ Run a complete automated grade with:
 python3 llm_judge.py grade \
   fixtures/customer_cube_raw.xlsx \
   /path/to/candidate_output.xlsx \
-  --rubric rubrics/customer_cube_llm_judge.json \
+  --rubric rubrics/customer_cube_finance_template.json \
   --report outputs/llm_judge/validated_report.json \
   --prompt-output outputs/llm_judge/judge_prompt.md \
   --raw-response-output outputs/llm_judge/model_response.json
@@ -308,6 +392,7 @@ python3 llm_judge.py grade \
 The validated report contains:
 
 - `validated_score`;
+- `outcome` (`PASS`, `REVIEW`, `FAIL`, or `FAIL - CRITICAL`);
 - `passed`;
 - the rubric ID and version;
 - the model and provider;
@@ -360,6 +445,9 @@ It grades from the raw data and written rubric.
 
 | File | What it does |
 |---|---|
+| `model_eval.py` | Calls the candidate model, builds its workbook, and runs the judge. |
+| `candidate_model_config.json` | Candidate-model, timeout, privacy, and output-limit settings. |
+| `scripts/build_model_candidate.mjs` | Renders the candidate model's JSON into Excel and QA previews. |
 | `llm_judge.py` | Main LLM grading program and command-line interface. |
 | `llm_judge_config.json` | Model, provider, timeout, Keychain, and evidence limits. |
 | `xlsx_reader.py` | Reads values and formulas from Excel workbooks. |

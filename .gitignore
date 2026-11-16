@@ -17,3 +17,6 @@ venv/
 outputs/**/qa_*.png
 outputs/**/qa_inspection.txt
 outputs/llm_judge/
+outputs/model_eval/
+outputs/rubric_integration/
+outputs/workbench/

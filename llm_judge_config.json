@@ -7,6 +7,7 @@
   "command": [],
   "timeout_seconds": 300,
   "max_output_tokens": 12000,
+  "store": false,
   "include_formulas": true,
   "max_evidence_cells": 50000
 }

@@ -28,14 +28,45 @@ REQUIRED_HEADERS = {
     "product": "product",
 }
 BUILTIN_DATE_FORMAT_IDS = set(range(14, 23)) | {27, 30, 36, 45, 46, 47, 50, 57}
+BUILTIN_NUMBER_FORMATS = {
+    0: "General",
+    1: "0",
+    2: "0.00",
+    3: "#,##0",
+    4: "#,##0.00",
+    9: "0%",
+    10: "0.00%",
+    11: "0.00E+00",
+    12: "# ?/?",
+    13: "# ??/??",
+    14: "mm-dd-yy",
+    15: "d-mmm-yy",
+    16: "d-mmm",
+    17: "mmm-yy",
+    18: "h:mm AM/PM",
+    19: "h:mm:ss AM/PM",
+    20: "h:mm",
+    21: "h:mm:ss",
+    22: "m/d/yy h:mm",
+    37: "#,##0;[Red](#,##0)",
+    38: "#,##0;[Red](#,##0)",
+    39: "#,##0.00;[Red](#,##0.00)",
+    40: "#,##0.00;[Red](#,##0.00)",
+    45: "mm:ss",
+    46: "[h]:mm:ss",
+    47: "mmss.0",
+    48: "##0.0E+0",
+    49: "@",
+}
 
 
 @dataclass(frozen=True, slots=True)
 class WorkbookCell:
-    """A value/formula pair read from one XLSX cell."""
+    """A value/formula/number-format tuple read from one XLSX cell."""
 
     value: object
     formula: str | None = None
+    number_format: str | None = None
 
 
 WorkbookCells = dict[str, dict[str, WorkbookCell]]
@@ -62,26 +93,34 @@ def _shared_strings(archive: zipfile.ZipFile) -> list[str]:
     ]
 
 
-def _date_style_indexes(archive: zipfile.ZipFile) -> set[int]:
+def _style_metadata(
+    archive: zipfile.ZipFile,
+) -> tuple[set[int], dict[int, str]]:
     try:
         root = ET.fromstring(archive.read("xl/styles.xml"))
     except KeyError:
-        return set()
+        return set(), {}
     custom_formats = {
         int(item.attrib["numFmtId"]): item.attrib.get("formatCode", "")
         for item in root.findall("x:numFmts/x:numFmt", NS)
     }
     cell_formats = root.find("x:cellXfs", NS)
     if cell_formats is None:
-        return set()
-    result: set[int] = set()
+        return set(), {}
+    date_styles: set[int] = set()
+    number_formats: dict[int, str] = {}
     for index, item in enumerate(cell_formats.findall("x:xf", NS)):
         format_id = int(item.attrib.get("numFmtId", "0"))
-        format_code = custom_formats.get(format_id, "").lower()
+        raw_format_code = custom_formats.get(
+            format_id, BUILTIN_NUMBER_FORMATS.get(format_id, "")
+        )
+        if raw_format_code and raw_format_code != "General":
+            number_formats[index] = raw_format_code
+        format_code = raw_format_code.lower()
         simplified = re.sub(r'"[^\"]*"|\\.|\[[^]]*\]', "", format_code)
         if format_id in BUILTIN_DATE_FORMAT_IDS or re.search(r"[dmy]", simplified):
-            result.add(index)
-    return result
+            date_styles.add(index)
+    return date_styles, number_formats
 
 
 def _sheet_paths(archive: zipfile.ZipFile) -> list[tuple[str, str]]:
@@ -167,7 +206,7 @@ def read_workbook_cells(path: Path) -> WorkbookCells:
     _validate_xlsx_path(path)
     with zipfile.ZipFile(path) as archive:
         shared = _shared_strings(archive)
-        date_styles = _date_style_indexes(archive)
+        date_styles, number_formats = _style_metadata(archive)
         uses_1904_dates = _workbook_uses_1904_dates(archive)
         workbook: WorkbookCells = {}
         for sheet_name, sheet_path in _sheet_paths(archive):
@@ -186,6 +225,9 @@ def read_workbook_cells(path: Path) -> WorkbookCells:
                         cell, shared, date_styles, uses_1904_dates
                     ),
                     formula=formula,
+                    number_format=number_formats.get(
+                        int(cell.attrib.get("s", "0"))
+                    ),
                 )
             workbook[sheet_name] = cells
     return workbook

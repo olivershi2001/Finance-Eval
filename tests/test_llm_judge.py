@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -14,6 +15,7 @@ sys.path.insert(0, str(ROOT))
 from llm_judge import (  # noqa: E402
     _extract_openai_output_text,
     build_judge_prompt,
+    call_openai_responses,
     load_config,
     load_rubric,
     resolve_openai_api_key,
@@ -80,6 +82,70 @@ class LlmJudgeTests(unittest.TestCase):
                 maximum = sum(item["max_points"] for item in rubric["criteria"])
                 self.assertEqual(maximum, 100)
 
+    def test_finance_template_rubric_preserves_anchored_scale_and_thresholds(
+        self,
+    ) -> None:
+        rubric = load_rubric(
+            ROOT / "rubrics" / "customer_cube_finance_template.json"
+        )
+
+        self.assertEqual(rubric["rating_scale"]["minimum"], 0)
+        self.assertEqual(rubric["rating_scale"]["maximum"], 4)
+        self.assertEqual(rubric["pass_threshold"], 85)
+        self.assertEqual(rubric["review_threshold"], 70)
+        self.assertEqual(len(rubric["criteria"]), 7)
+        self.assertEqual(sum(item["max_points"] for item in rubric["criteria"]), 100)
+
+    def test_anchored_ratings_are_converted_to_weighted_points(self) -> None:
+        rubric = load_rubric(
+            ROOT / "rubrics" / "customer_cube_finance_template.json"
+        )
+        ratings = {"C1": 4, "C2": 4, "C3": 4, "C4": 3, "C5": 1, "C6": 3, "C7": 3}
+        response = {
+            "summary": "The workbook is useful but needs normal senior review.",
+            "confidence": 0.85,
+            "critical_errors": [],
+            "criteria": [
+                {
+                    "id": criterion["id"],
+                    "rating": ratings[criterion["id"]],
+                    "rationale": "The workbook evidence supports this anchored rating.",
+                    "evidence": ["Quarterly!A1:N20 - sampled evidence"],
+                }
+                for criterion in rubric["criteria"]
+            ],
+        }
+
+        report = validate_judge_response(response, rubric)
+
+        self.assertEqual(report["validated_score"], 81.25)
+        self.assertEqual(report["outcome"], "REVIEW")
+        self.assertFalse(report["passed"])
+        self.assertEqual(report["criteria"][0]["rating"], 4)
+        self.assertEqual(report["criteria"][0]["score"], 30)
+
+    def test_anchored_rating_rejects_values_between_declared_steps(self) -> None:
+        rubric = load_rubric(
+            ROOT / "rubrics" / "customer_cube_finance_template.json"
+        )
+        response = {
+            "summary": "Invalid half-step response.",
+            "confidence": 0.8,
+            "critical_errors": [],
+            "criteria": [
+                {
+                    "id": criterion["id"],
+                    "rating": 2.5 if index == 0 else 4,
+                    "rationale": "Evidence was reviewed.",
+                    "evidence": ["Annual!A1:N20 - sampled evidence"],
+                }
+                for index, criterion in enumerate(rubric["criteria"])
+            ],
+        }
+
+        with self.assertRaisesRegex(ValueError, "increments of 1"):
+            validate_judge_response(response, rubric)
+
     def test_raw_workbook_is_serialized_with_addresses_and_all_rows(self) -> None:
         evidence = workbook_to_evidence(
             ROOT / "fixtures" / "customer_cube_raw.xlsx",
@@ -90,6 +156,17 @@ class LlmJudgeTests(unittest.TestCase):
         self.assertEqual(evidence["cell_count"], 4_004)
         self.assertEqual(evidence["sheets"][0]["used_range"], "A1:D1001")
         self.assertEqual(len(evidence["sheets"][0]["rows"]), 1_001)
+
+    def test_workbook_evidence_includes_observable_number_formats(self) -> None:
+        evidence = workbook_to_evidence(
+            ROOT / "fixtures" / "customer_cube_raw.xlsx",
+            include_formulas=True,
+            max_evidence_cells=10_000,
+        )
+        first_data_row = evidence["sheets"][0]["rows"][1]["values"]
+
+        self.assertEqual(first_data_row[1]["number_format"], "mmm yyyy")
+        self.assertIn("$", first_data_row[2]["number_format"])
 
     def test_prompt_contains_rubric_security_rule_and_both_workbooks(self) -> None:
         prompt = build_judge_prompt(
@@ -190,6 +267,57 @@ class LlmJudgeTests(unittest.TestCase):
             capture_output=True,
             check=False,
         )
+
+    def test_openai_request_can_require_a_strict_json_schema(self) -> None:
+        config = {
+            "model": "test-model",
+            "api_url": "https://api.openai.com/v1/responses",
+            "api_key_env": "OPENAI_API_KEY",
+            "keychain_service": "",
+            "max_output_tokens": 1000,
+            "timeout_seconds": 30,
+            "store": False,
+        }
+        schema = {
+            "type": "object",
+            "properties": {"answer": {"type": "string"}},
+            "required": ["answer"],
+            "additionalProperties": False,
+        }
+        api_response = {
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {"type": "output_text", "text": '{"answer":"ok"}'}
+                    ],
+                }
+            ]
+        }
+        opened = Mock()
+        opened.__enter__ = Mock(return_value=opened)
+        opened.__exit__ = Mock(return_value=False)
+        opened.read.return_value = json.dumps(api_response).encode("utf-8")
+
+        with (
+            patch("llm_judge.resolve_openai_api_key", return_value="sk-test"),
+            patch("llm_judge.urllib.request.urlopen", return_value=opened) as urlopen,
+        ):
+            response = call_openai_responses(
+                "Return JSON.",
+                config,
+                response_schema=schema,
+                schema_name="answer_schema",
+            )
+
+        self.assertEqual(response, '{"answer":"ok"}')
+        request = urlopen.call_args.args[0]
+        body = json.loads(request.data.decode("utf-8"))
+        self.assertFalse(body["store"])
+        self.assertEqual(body["text"]["format"]["type"], "json_schema")
+        self.assertEqual(body["text"]["format"]["name"], "answer_schema")
+        self.assertTrue(body["text"]["format"]["strict"])
+        self.assertEqual(body["text"]["format"]["schema"], schema)
 
 
 if __name__ == "__main__":

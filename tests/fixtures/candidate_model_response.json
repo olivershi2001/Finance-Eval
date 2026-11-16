@@ -1,0 +1,76 @@
+{
+  "workbook_title": "Customer Cube — Candidate Model Output",
+  "currency_unit": "USD",
+  "period_basis": "Calendar period sums",
+  "summary": "Revenue expanded in the latest sampled quarter, while churn and concentration require review.",
+  "insights": [
+    "Latest-quarter closing revenue is $130, up from $100 opening revenue.",
+    "Net retention is 130.0% in the sampled overall row."
+  ],
+  "diligence_questions": [
+    "What explains the concentration of expansion in the latest quarter?",
+    "Were any returning customers included in New?"
+  ],
+  "assumptions": [
+    "Monthly revenue is summed into calendar quarters and years.",
+    "Reactivation is reported under New and should be reviewed separately."
+  ],
+  "data_quality": [
+    {
+      "issue": "Duplicate customer-month-product keys",
+      "severity": "Review",
+      "affected_rows": 5,
+      "impact": "Split transactions can double-count revenue if not aggregated.",
+      "treatment": "Aggregate valid split rows before classification."
+    }
+  ],
+  "quarterly_rows": [
+    {
+      "period": "2025-Q4",
+      "slice_type": "overall",
+      "slice_value": "All",
+      "opening_revenue": 100,
+      "new": 10,
+      "upsell": 20,
+      "downsell": 0,
+      "cross_sell": 0,
+      "churn": 0,
+      "closing_revenue": 130,
+      "gross_retention": 1,
+      "net_retention": 1.3,
+      "ttm_gross_retention": 0.9
+    },
+    {
+      "period": "2025-Q4",
+      "slice_type": "product",
+      "slice_value": "Platform",
+      "opening_revenue": 100,
+      "new": 10,
+      "upsell": 20,
+      "downsell": 0,
+      "cross_sell": 0,
+      "churn": 0,
+      "closing_revenue": 130,
+      "gross_retention": 1,
+      "net_retention": 1.3,
+      "ttm_gross_retention": 0.9
+    }
+  ],
+  "annual_rows": [
+    {
+      "period": "2025",
+      "slice_type": "overall",
+      "slice_value": "All",
+      "opening_revenue": 100,
+      "new": 10,
+      "upsell": 20,
+      "downsell": 0,
+      "cross_sell": 0,
+      "churn": 0,
+      "closing_revenue": 130,
+      "gross_retention": 1,
+      "net_retention": 1.3,
+      "ttm_gross_retention": 0.9
+    }
+  ]
+}

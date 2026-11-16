@@ -1,0 +1,13 @@
+{
+  "provider": "openai_responses",
+  "model": "gpt-5.6-sol",
+  "api_url": "https://api.openai.com/v1/responses",
+  "api_key_env": "OPENAI_API_KEY",
+  "keychain_service": "com.openai.finance-eval.api-key",
+  "command": [],
+  "timeout_seconds": 900,
+  "max_output_tokens": 60000,
+  "store": false,
+  "include_formulas": false,
+  "max_evidence_cells": 50000
+}
