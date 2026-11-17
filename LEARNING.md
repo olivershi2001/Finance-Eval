@@ -1,0 +1,124 @@
+# Customer Lab: compare, review, improve
+
+The learning workspace connects model outputs to an explicit correction loop.
+It does not retrain a model or silently change an answer key.
+
+## Compare models
+
+Choose a completed, monthly-revenue analysis as the source. Enter two to four
+distinct model IDs from your provider account, then start the comparison. The
+app copies the exact source bytes into each run and uses the same amount
+convention, reference engine, task prompt, and scorer. Each run has a frozen
+configuration; changing the config file later does not alter queued runs.
+
+The comparison table displays numeric score, failure count, model-call duration,
+and total processing duration. Waiting in the local queue is excluded. Prompt
+hashes are shown as matching only after all participating runs record them.
+The app does not measure token cost, infer model availability, or turn a single
+trial on a small source into a general model ranking. Failed API calls remain
+failed runs; they are not scored as zeros or replaced by calculated successes.
+Comparison failure counts exclude subjective reviewer notes, which appear
+separately in the failure tracker.
+
+Every comparison starts one provider call per model. The independent judge is
+not run during comparisons, so it cannot silently add calls or influence the
+deterministic score. The existing two-worker queue bounds concurrent execution.
+
+## Track individual failures
+
+The failure tracker derives revenue/retention differences, missing and extra
+keys, duplicate keys, execution failures, and flagged review notes from original
+saved runs. Its row-coverage diagnostics use complete output key sets, not the
+scorer's capped diagnostic samples.
+
+Each issue has a stable ID and an append-only status history. You can mark it
+open, investigating, resolved, or dismissed, with a required reason. This never
+rewrites the source, original model response, score, or review note. Resolving
+an issue documents your decision; it does not make the old model output pass.
+Coverage differences can reflect an output-contract mismatch rather than a
+numerical mistake, so inspect the cause before treating them as model failures.
+
+## Turn notes into tests
+
+Inspect an output row and save a review note. On that note, choose **Create
+regression test**. Name the test and choose one assertion:
+
+- A numeric metric equals a reviewer-entered value.
+- An output row must be absent.
+- An output row must appear exactly once.
+
+The numeric form suggests the reference engine's value where available. You
+must explicitly save the expectation and rationale; your expected answer may
+disagree with the engine. Rates are fractions: `0.85` means 85%. Null retention
+is distinct from zero retention. Numeric comparisons use 1e-6 absolute and
+relative tolerances. Gross retention is bounded to [0,1]; net retention can
+exceed one. A missing or duplicated required numeric row fails.
+
+Cases retain a source copy, SHA-256 source fingerprint, amount convention,
+four-part row key, assertion, answer, rationale, originating note and run IDs,
+and case fingerprint. Modified case definitions or source bytes are rejected.
+Identical case definitions are deduplicated. An incompatible source or amount
+convention is skipped, never counted as a pass.
+
+Existing compatible runs are evaluated retrospectively and labeled by run mode.
+Calculated and AI-explanation runs reflect engine calculations; they are not
+independent model-calculation trials. **Rerun source against this test** makes
+a new model-calculation run on the saved source. The candidate receives only
+the source and task instructions, never the regression answer, case title,
+rationale, or review note. When the run completes, return to Regression suite
+to inspect the result. One rerun starts one provider call.
+
+The suite checks the recorded specific assertions. It cannot establish that
+every other cell or explanation is correct, or that a reviewer answer itself
+has been independently adjudicated.
+
+## Data and reproducibility
+
+All comparisons, issue history, and cases stay under ignored `outputs/workbench/`.
+**Export learning history** downloads JSON definitions, statuses, and evaluation
+results; it does not include source workbook copies. Original full-run bundles
+still include the source and available model prompts/responses. Treat both
+exports as potentially private if used with non-public data.
+
+`lab.py` owns comparison records, issue tracking, and regression assertions.
+`web/lab.js` and `web/lab.css` provide the three new views. Existing `app.py`
+routes connect them to the worker, and `tests/test_lab.py` exercises isolation,
+frozen configuration, failures, nulls, structure checks, and answer withholding.
+The HTTP integration test covers the complete create/resolve/test/rerun/export path.
+
+The 12-row fixture in `fixtures/customer_cube_learning.xlsx` is original
+synthetic data generated by `scripts/build_learning_fixture.mjs`. Its amounts
+are unitless and all names are fabricated. It includes a first-quarter customer
+addition, second-quarter upsell/downsell/cross-sell/churn, and additive duplicate
+rows. It produces 16 reference output rows. Quarterly revenue totals are 350 and
+420; the annual total is 770. The source ends in June: the year is partial and
+the data are deliberately tiny. Do not infer real business performance.
+
+## Remaining boundaries
+
+No automatic training, model-selection policy, unattended recurring evaluations,
+token-cost estimates, fiscal-calendar editor, or cross-dataset leaderboard is
+included. Cases are immutable definitions; correcting an expected answer means
+creating a new definition. Source and case fingerprints detect edits; artifacts
+are not digitally signed. The app remains a single-user localhost service.
+
+## Verification on November 17, 2026
+
+- The software suite includes 57 tests, including the full HTTP correction loop,
+  incompatible-data skips, null/zero distinctions, source/case tamper detection,
+  omitted and duplicate rows, configuration snapshots, and answer withholding.
+- A live comparison sent identical prompts and the 12-row synthetic source to
+  the configured `gpt-5.6-sol` and `gpt-6.1-sol` models. Each scored 98.82/100.
+  All overlapping numeric values matched; each returned two extra zero-activity
+  slice rows excluded by the strict output contract. Model calls took 46.571
+  and 57.243 seconds in this single trial; these are not latency benchmarks.
+- Browser QA traced the extra Sample Gamma first-quarter row to June source
+  records, documented the investigation, and promoted the note into a saved
+  row-absence case. Both original model outputs failed that assertion.
+- The task prompt was clarified to exclude future-only slices. A new live
+  `gpt-5.6-sol` run passed the saved case and scored 100/100, with no numeric
+  differences and no run warnings. Its model call took 38.175 seconds. The
+  candidate prompt did not contain the regression title or review note.
+- The small trials demonstrate the product's correction loop on this fixture.
+  They do not establish model rankings, general finance capability, or the
+  causal effect of a prompt change without further repeated trials.

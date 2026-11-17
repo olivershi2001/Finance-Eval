@@ -18,8 +18,10 @@ import re
 import secrets
 import subprocess
 import threading
+import time
 from urllib.parse import parse_qs, urlparse
 import zipfile
+from lab import Lab, valid_model, fingerprint
 
 from customer_cube import calculate_cube
 from models import CubeConfig, CubeRow
@@ -209,6 +211,8 @@ def compare_rows(expected, actual, config):
 def process_run(run_id):
     path = run_dir(run_id)
     meta = read_json(path / "run.json")
+    started = time.monotonic()
+    model_seconds = None
     try:
         update(path, status="running", stage="Reading and validating source data")
         records = load_revenue_records(path / "source.xlsx")
@@ -225,11 +229,13 @@ def process_run(run_id):
         actual = reference
         score, differences, candidate = None, [], None
         warnings = []
-        model_config = load_config(ROOT / "candidate_model_config.json")
+        model_config = meta.get("model_config") or load_config(ROOT / "candidate_model_config.json")
         if meta["mode"] == "assisted":
             update(path, stage="AI is explaining the calculated results")
             try:
+                model_started = time.monotonic()
                 narrative = generate_narrative(path, reference, checks, model_config, meta["amount_mode"])
+                model_seconds = round(time.monotonic() - model_started, 3)
             except Exception as exc:
                 warnings.append(f"AI explanation unavailable: {safe_error(exc)}. The calculated results remain available.")
         elif meta["mode"] == "model":
@@ -239,9 +245,16 @@ def process_run(run_id):
             prompt = build_candidate_prompt(path / "source.xlsx", model_config).replace(
                 "Calendar quarters use labels like 2024-Q1; calendar years use labels like 2024.",
                 "Calendar quarters must use the reference engine's labels like FY2024-Q1; calendar years use FY2024. The FY prefix does not change the January year start.")
+            prompt += ("\nOutput coverage contract: For monthly revenue, include customer and product slices only when source records "
+                       "for that slice occur in the current or immediately preceding comparable period. Keep prior-period slices "
+                       "that churned. Do not add a customer or product appearing only in future periods. The overall slice_value is All.\n")
             (path / "candidate_prompt.txt").write_text(prompt)
+            update(path, prompt_sha256=hashlib.sha256(prompt.encode()).hexdigest())
+            model_started = time.monotonic()
             response = call_candidate(prompt, model_config)
+            model_seconds = round(time.monotonic() - model_started, 3)
             (path / "candidate_response.txt").write_text(response)
+            update(path, model_seconds=model_seconds, response_sha256=hashlib.sha256(response.encode()).hexdigest())
             candidate = validate_candidate_response(_parse_model_json(response))
             actual = tuple(CubeRow.from_dict({**r, "grain": grain}) for grain, name in
                            (("quarterly", "quarterly_rows"), ("annual", "annual_rows")) for r in candidate[name])
@@ -296,10 +309,12 @@ def process_run(run_id):
                 warnings.append(f"Independent judge unavailable: {safe_error(exc)}")
             write_json(path / "result.json", result)
         update(path, status="complete", stage="Ready for your review", has_excel=(path / "analysis.xlsx").is_file(),
+               model_seconds=model_seconds, total_seconds=round(time.monotonic() - started, 3),
                model=model_config.get("model") if meta["mode"] != "reference" else None,
                result_sha256=hashlib.sha256((path / "result.json").read_bytes()).hexdigest())
     except Exception as exc:
-        update(path, status="failed", stage="Run could not complete", error=safe_error(exc))
+        update(path, status="failed", stage="Run could not complete", error=safe_error(exc),
+               total_seconds=round(time.monotonic() - started, 3), model_seconds=model_seconds)
 
 
 def csv_safe(value):
@@ -343,13 +358,21 @@ def export_workbook(path, candidate, rows, narrative, model_config, meta):
     render_candidate_workbook(path / "workbook_payload.json", path / "analysis.xlsx", path / "qa", 300)
 
 
-def create_run(data, filename, mode="reference", amount_mode="period_sum", judge=False, demo=False):
+def create_run(data, filename, mode="reference", amount_mode="period_sum", judge=False, demo=False,
+               selected_model=None, comparison_id=None, regression_case_id=None):
     if mode not in ("reference", "assisted", "model"):
         raise ValueError("Choose a supported analysis mode")
     if amount_mode not in ("period_sum", "period_end"):
         raise ValueError("Choose monthly revenue or month-end balance")
     if mode == "model" and amount_mode != "period_sum":
         raise ValueError("Test a model currently supports monthly revenue only")
+    model_config = load_config(ROOT / "candidate_model_config.json")
+    if selected_model is not None:
+        model_config["model"] = valid_model(selected_model)
+    # Snapshot only configuration fields, never provider credentials or arbitrary config keys.
+    safe_keys = ("provider", "model", "api_url", "api_key_env", "keychain_service", "command",
+                 "timeout_seconds", "max_output_tokens", "store", "include_formulas", "max_evidence_cells")
+    model_config = {k: model_config[k] for k in safe_keys if k in model_config}
     validate_upload(data)
     run_id = secrets.token_hex(12)
     path = STORE / run_id
@@ -358,6 +381,9 @@ def create_run(data, filename, mode="reference", amount_mode="period_sum", judge
     meta = {"id": run_id, "filename": Path(filename).name[:160], "mode": mode, "amount_mode": amount_mode,
             "judge": judge, "demo": demo, "status": "queued", "stage": "Waiting to start", "created_at": now(),
             "source_sha256": hashlib.sha256(data).hexdigest(), "review_status": "unreviewed"}
+    meta.update(selected_model=model_config.get("model") if mode != "reference" else None,
+                model_config=model_config, config_sha256=fingerprint(model_config),
+                comparison_id=comparison_id, regression_case_id=regression_case_id)
     write_json(path / "run.json", meta)
     write_json(path / "feedback.json", [])
     POOL.submit(process_run, run_id)
@@ -409,10 +435,29 @@ class Handler(BaseHTTPRequestHandler):
             parsed = urlparse(self.path)
             route = parsed.path
             query = {k: v[0] for k, v in parse_qs(parsed.query).items()}
-            if not post and route in ("/", "/app.js", "/style.css"):
+            if not post and route in ("/", "/app.js", "/lab.js", "/style.css", "/lab.css"):
                 name = "index.html" if route == "/" else route[1:]
-                types = {"index.html": "text/html; charset=utf-8", "app.js": "text/javascript; charset=utf-8", "style.css": "text/css; charset=utf-8"}
+                types = {"index.html": "text/html; charset=utf-8", "app.js": "text/javascript; charset=utf-8", "lab.js": "text/javascript; charset=utf-8", "style.css": "text/css; charset=utf-8", "lab.css": "text/css; charset=utf-8"}
                 return self.send_bytes((ROOT / "web" / name).read_bytes(), types[name])
+            lab = Lab(STORE, LOCK)
+            if route == "/api/comparisons":
+                return self.send_json(lab.create_comparison(json.loads(self.body()), create_run), 202) if post else self.send_json(lab.comparisons())
+            comparison = re.fullmatch(r"/api/comparisons/([a-f0-9]{24})", route)
+            if comparison and not post:
+                return self.send_json(lab.comparison(comparison[1]))
+            if route == "/api/issues" and not post:
+                return self.send_json(lab.issues())
+            issue = re.fullmatch(r"/api/issues/([a-f0-9]{24})", route)
+            if issue and post:
+                return self.send_json(lab.update_issue(issue[1], json.loads(self.body())))
+            if route == "/api/cases":
+                return self.send_json(lab.create_case(json.loads(self.body())), 201) if post else self.send_json(lab.suite_report())
+            case = re.fullmatch(r"/api/cases/([a-f0-9]{24})/run", route)
+            if case and post:
+                return self.send_json(lab.rerun_case(case[1], json.loads(self.body()), create_run), 202)
+            if route == "/api/lab/export" and not post:
+                report = {"comparisons": lab.comparisons(), "issues": lab.issues(), **lab.suite_report()}
+                return self.send_bytes(json.dumps(report, indent=2, allow_nan=False).encode(), "application/json", filename="customer-lab-learning.json")
             if not post and route == "/api/config":
                 return self.send_json({"ai": provider_status(), "max_rows": MAX_ROWS, "max_upload_mb": 5})
             if route == "/api/runs":
@@ -424,7 +469,7 @@ class Handler(BaseHTTPRequestHandler):
                         raise ValueError("Choose an .xlsx workbook")
                     meta = create_run(data, "Synthetic customer revenue.xlsx" if demo else query["filename"],
                                       query.get("mode", "reference"), query.get("amount_mode", "period_sum"),
-                                      query.get("judge") == "1", demo)
+                                      query.get("judge") == "1", demo, selected_model=query.get("model"))
                     return self.send_json(meta, 202)
                 items = [read_json(p) for p in STORE.glob("*/run.json")]
                 return self.send_json(sorted(items, key=lambda x: x["created_at"], reverse=True))
@@ -435,7 +480,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not post and action is None:
                     meta = read_json(path / "run.json")
                     return self.send_json({"run": meta, "result": read_json(path / "result.json") if (path / "result.json").exists() else None,
-                                           "feedback": read_json(path / "feedback.json")})
+                                           "feedback": read_json(path / "feedback.json"), "regressions": lab.evaluate_cases(match[1])})
                 if not post and action == "evidence":
                     evidence = read_json(path / "source_evidence.json")
                     if query.get("customer"):
@@ -454,7 +499,8 @@ class Handler(BaseHTTPRequestHandler):
                     key = body.get("row_key")
                     if key is not None:
                         result = read_json(path / "result.json")
-                        valid = [[r[k] for k in ("grain", "period", "slice_type", "slice_value")] for r in result["rows"]]
+                        valid = [[r[k] for k in ("grain", "period", "slice_type", "slice_value")]
+                                 for r in result["rows"] + result.get("reference_rows", [])]
                         if key not in valid:
                             raise ValueError("Review note points to an unknown row")
                     with LOCK:

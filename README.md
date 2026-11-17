@@ -2,6 +2,17 @@
 
 ## Interactive customer-analysis app
 
+The v2 learning workspace adds **Compare models**, a **Failure tracker**, and a
+**Regression suite**. Compare 2–4 model IDs on a saved source, track individual
+issues through resolution, and promote row-linked review notes into numeric or
+row-presence tests with reviewer-entered answers. New runs freeze provider
+configuration, prompt/response hashes, and timing. See [LEARNING.md](LEARNING.md).
+
+For an inexpensive trial, upload `fixtures/customer_cube_learning.xlsx`: 12
+original synthetic source rows with three dummy customers and two products.
+Its source generator is `scripts/build_learning_fixture.mjs`; missing months
+and duplicate Gamma rows are intentional.
+
 Start the local workbench from this directory:
 
 ```bash

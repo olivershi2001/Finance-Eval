@@ -176,6 +176,42 @@ class WorkbenchTests(unittest.TestCase):
                     self.assertIn("feedback.json", archive.namelist())
                     self.assertIn("analysis.csv", archive.namelist())
                     self.assertEqual(json.loads(archive.read("feedback.json"))[0]["note"], "Check the first period")
+            saved_note = app.read_json(app.run_dir(run["id"]) / "feedback.json")[0]
+            case_body = {"run_id": run["id"], "note_id": saved_note["id"], "title": "Check the first closing value",
+                         "rationale": "Source reviewed in the test", "metric": "closing_revenue", "expected": result["rows"][0]["closing_revenue"]}
+            with urlopen(Request(base + "/api/cases", data=json.dumps(case_body).encode())) as response:
+                self.assertEqual(response.status, 201)
+                saved_case = json.load(response)
+            with urlopen(base + "/api/cases") as response:
+                suite = json.load(response)
+                self.assertEqual(suite["evaluations"][0]["status"], "pass")
+            with urlopen(base + "/api/issues") as response:
+                issues = json.load(response)
+                self.assertEqual(issues[0]["category"], "reviewer")
+            with urlopen(Request(base + "/api/issues/" + issues[0]["id"], data=json.dumps({"status": "resolved", "note": "Documented in a regression case"}).encode())) as response:
+                self.assertEqual(json.load(response)[-1]["status"], "resolved")
+            with urlopen(Request(base + "/api/comparisons", data=json.dumps({"source_run_id": run["id"], "models": ["fixture-a", "fixture-b"]}).encode())) as response:
+                batch = json.load(response)
+                self.assertEqual(response.status, 202)
+                self.assertEqual(len(batch["run_ids"]), 2)
+            with urlopen(base + "/api/comparisons/" + batch["id"]) as response:
+                self.assertEqual(json.load(response)["status"], "running")
+            with urlopen(Request(base + "/api/cases/" + saved_case["id"] + "/run", data=b'{"model":"fixture-a"}')) as response:
+                self.assertEqual(json.load(response)["regression_case_id"], saved_case["id"])
+            with urlopen(base + "/api/lab/export") as response:
+                report = json.load(response)
+                self.assertEqual(report["cases"][0]["id"], saved_case["id"])
+                self.assertEqual(report["issues"][0]["status"], "resolved")
+            # A reviewer must be able to anchor a row-presence test to a gold row
+            # that the candidate omitted, even though it cannot appear in its table.
+            stored = app.read_json(app.run_dir(run["id"]) / "result.json")
+            missing = {**stored["rows"][0], "slice_type": "customer", "slice_value": "Omitted example"}
+            stored["reference_rows"].append(missing)
+            app.write_json(app.run_dir(run["id"]) / "result.json", stored)
+            missing_key = [missing[k] for k in ("grain", "period", "slice_type", "slice_value")]
+            with urlopen(Request(url + "/feedback", data=json.dumps({"note": "This row should be present", "row_key": missing_key}).encode())) as response:
+                self.assertEqual(response.status, 201)
+                self.assertEqual(json.load(response)[-1]["row_key"], missing_key)
             with self.assertRaises(HTTPError) as error:
                 urlopen(Request(base + "/api/runs?demo=1", data=b"", headers={"Origin": "https://other.example"}))
             self.assertEqual(error.exception.code, 403)

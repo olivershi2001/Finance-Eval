@@ -121,7 +121,7 @@ Verified on November 15, 2026:
 - Model-calculation and separate-judge paths were exercised with controlled
   responses in tests. Neither was measured as a live model benchmark in this build.
 
-Next product improvements would be configurable fiscal calendars, a reviewed
-gold set for additional fixtures, an issue-resolution model, side-by-side run
-comparison, and measured model accuracy/cost/latency. They are not implemented
-or implied by this version.
+The v2 learning workspace now adds model comparisons, issue-resolution history,
+reviewer-authored regression cases, and model-call timing. See [LEARNING.md](LEARNING.md)
+for scope and limitations. Configurable fiscal calendars, a broader adjudicated
+gold set, and token-cost measurement remain future work.
